@@ -4023,6 +4023,345 @@ async fn changing_a_native_bots_level_keeps_its_own_folder() {
     );
 }
 
+/// A bot of the claude CLI that has not been given an engine yet; returns the bot path.
+async fn cli_bot_without_engine(t: &T) -> String {
+    let created = call(
+        t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({"profile_toml": PROFILE.replace("fake/echo", "cli:claude/sonnet")})),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    format!("/v1/bots/{}", created.json()["id"].as_str().unwrap())
+}
+
+/// The picker's consent step sends no folder. The folder the daemon picks must pass the folder
+/// rule: on a host the service account's home IS the data folder, so a folder below the home is
+/// refused ("This folder cannot be used"); the bot's folder under the workspaces root is not.
+#[tokio::test]
+async fn a_native_bot_without_a_chosen_folder_gets_its_own_folder_outside_the_data_folder() {
+    let t = setup();
+    let root = tempfile::tempdir().unwrap();
+    let root_dir = root.path().join("praxi-work");
+    t.state.set_workspaces_root(Some(root_dir.clone()));
+    let path = cli_bot_without_engine(&t).await;
+    let ok = call(
+        &t,
+        Method::PUT,
+        &format!("{path}/engine"),
+        Some(json!({
+            "mode": "native_tools", "approval_level": "ask", "consent_native_tools": true
+        })),
+    )
+    .await;
+    assert_eq!(ok.status, StatusCode::OK, "{:?}", ok.json());
+    let folder =
+        std::path::PathBuf::from(ok.json()["config"]["engine"]["workspace"].as_str().unwrap());
+    let root_real = std::fs::canonicalize(&root_dir).unwrap();
+    let data_real = std::fs::canonicalize(t.state.storage().data_dir()).unwrap();
+    let folder_real = std::fs::canonicalize(&folder).unwrap();
+    assert!(folder_real.starts_with(&root_real), "{folder:?}");
+    assert!(!folder_real.starts_with(&data_real), "{folder:?}");
+    assert_eq!(folder_real.parent(), Some(root_real.as_path()));
+    // Not the home folder, not inside it, not a credential or CLI settings folder.
+    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+        let home = std::fs::canonicalize(home).unwrap_or_default();
+        assert!(
+            !home.starts_with(&folder_real),
+            "the home folder is inside {folder:?}"
+        );
+    }
+    assert_eq!(
+        builtin_tools::workspace_refusal(&folder, t.state.storage().data_dir()),
+        None
+    );
+    // Another bot gets its own folder, never the same one or one inside it.
+    let other = cli_bot_without_engine(&t).await;
+    let second = call(
+        &t,
+        Method::PUT,
+        &format!("{other}/engine"),
+        Some(
+            json!({"mode": "native_tools", "approval_level": "ask", "consent_native_tools": true}),
+        ),
+    )
+    .await;
+    assert_eq!(second.status, StatusCode::OK, "{:?}", second.json());
+    let second_real = std::fs::canonicalize(
+        second.json()["config"]["engine"]["workspace"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        second_real != folder_real
+            && !second_real.starts_with(&folder_real)
+            && !folder_real.starts_with(&second_real),
+        "{second_real:?} / {folder_real:?}"
+    );
+    // A second save (another level) keeps that folder.
+    let again = call(
+        &t,
+        Method::PUT,
+        &format!("{path}/engine"),
+        Some(json!({"mode": "native_tools", "approval_level": "accept_edits", "consent_native_tools": true})),
+    )
+    .await;
+    assert_eq!(again.status, StatusCode::OK, "{:?}", again.json());
+    assert_eq!(
+        again.json()["config"]["engine"]["workspace"],
+        ok.json()["config"]["engine"]["workspace"]
+    );
+}
+
+/// A saved folder that is now a link (swapped after it was chosen) is never kept: the next engine
+/// save without a folder replaces it with the bot's own folder, even when the link target is fine.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_saved_folder_that_became_a_link_is_not_kept() {
+    let t = setup();
+    let root = tempfile::tempdir().unwrap();
+    t.state
+        .set_workspaces_root(Some(root.path().join("praxi-work")));
+    let path = cli_bot_without_engine(&t).await;
+    let bot_id = protocol::BotId(path.rsplit('/').next().unwrap().parse().unwrap());
+    let real = tempfile::tempdir().unwrap();
+    let link = root.path().join("swapped");
+    std::os::unix::fs::symlink(real.path(), &link).unwrap();
+    let (mut bot, version) = t
+        .state
+        .storage()
+        .get_bot_versioned(bot_id)
+        .unwrap()
+        .unwrap();
+    bot.config["engine"] = json!({
+        "mode": "native_tools", "approval_level": "ask", "workspace": link.display().to_string(),
+        "consent": {"native_tools_at_ms": 1}
+    });
+    t.state
+        .storage()
+        .update_bot(bot_id, &bot.name, &bot.config, version)
+        .unwrap();
+    let ok = call(
+        &t,
+        Method::PUT,
+        &format!("{path}/engine"),
+        Some(
+            json!({"mode": "native_tools", "approval_level": "ask", "consent_native_tools": true}),
+        ),
+    )
+    .await;
+    assert_eq!(ok.status, StatusCode::OK, "{:?}", ok.json());
+    let folder = ok.json()["config"]["engine"]["workspace"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(folder, link.display().to_string());
+    let meta = std::fs::symlink_metadata(&folder).unwrap();
+    assert!(meta.is_dir() && !meta.file_type().is_symlink());
+    assert!(
+        std::fs::canonicalize(&folder)
+            .unwrap()
+            .starts_with(std::fs::canonicalize(root.path().join("praxi-work")).unwrap())
+    );
+}
+
+/// A host bot whose coding CLI cannot answer must not stay stuck once the owner picks an API model:
+/// the next message in the same chat runs on the API model, with the engine back to governed.
+#[tokio::test]
+async fn an_api_model_picked_after_a_failing_cli_model_answers_the_next_message() {
+    let t = setup();
+    let workspace = tempfile::tempdir().unwrap();
+    let (path, native) = native_cli_bot(&t, workspace.path()).await;
+    let bot = path.rsplit('/').next().unwrap().to_owned();
+    let chat = call(
+        &t,
+        Method::POST,
+        "/v1/chats",
+        Some(json!({ "bot_id": bot })),
+    )
+    .await;
+    assert_eq!(chat.status, StatusCode::CREATED);
+    let chat = chat.json()["id"].as_str().unwrap().to_owned();
+    // No CLI provider is set up on this host: the message fails, as on the owner's server.
+    let failed = send_msg(&t, &chat, "hello", "queue").await;
+    wait_state(&t, failed["run_id"].as_str().unwrap(), "failed").await;
+    // The owner picks an API model in the model picker.
+    let api = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({"profile_toml": PROFILE, "expected_version": native["version"]})),
+    )
+    .await;
+    assert_eq!(api.status, StatusCode::OK, "{:?}", api.json());
+    assert_eq!(api.json()["config"]["models"]["executor"], "fake/echo");
+    assert_eq!(api.json()["config"]["engine"]["mode"], "praxi_governed");
+    // The next message goes to the API model and is answered.
+    let next = send_msg(&t, &chat, "hello again", "queue").await;
+    wait_state(&t, next["run_id"].as_str().unwrap(), "succeeded").await;
+    let msgs = call(&t, Method::GET, &format!("/v1/chats/{chat}/messages"), None)
+        .await
+        .json();
+    let last = msgs.as_array().unwrap().last().unwrap();
+    assert_eq!(last["role"], "assistant", "{msgs}");
+    assert!(
+        last["content"].as_str().unwrap().contains("hello again"),
+        "{msgs}"
+    );
+}
+
+/// The app applies a Full access bot's engine without a dialog (`full_access_bot`). The daemon
+/// checks the stored permission preset itself, with the runtime's own spelling rule, and the level.
+#[tokio::test]
+async fn the_no_dialog_full_access_switch_needs_a_stored_full_preset() {
+    let t = setup();
+    let root = tempfile::tempdir().unwrap();
+    t.state
+        .set_workspaces_root(Some(root.path().join("praxi-work")));
+    let body = |level: &str| {
+        json!({
+            "mode": "native_tools", "approval_level": level, "consent_native_tools": true,
+            "consent_full_access": level == "full", "full_access_bot": true
+        })
+    };
+    // A bot that is not on Full access: refused with 403, nothing stored, whatever the client claims.
+    let ask = cli_bot_without_engine(&t).await;
+    let refused = call(
+        &t,
+        Method::PUT,
+        &format!("{ask}/engine"),
+        Some(body("full")),
+    )
+    .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::FORBIDDEN,
+        "{:?}",
+        refused.json()
+    );
+    let bot = call(&t, Method::GET, &ask, None).await.json();
+    assert!(
+        bot["config"]["engine"]["mode"].is_null()
+            || bot["config"]["engine"]["mode"] == "praxi_governed"
+    );
+    // A Full bot (the preset is read by the runtime, whose spelling rule is unit-tested in permission-engine).
+    for preset in ["full"] {
+        let profile = format!(
+            "{}\n[permissions]\npreset = \"{preset}\"\n",
+            PROFILE.replace("fake/echo", "cli:claude/sonnet")
+        );
+        let created = call(
+            &t,
+            Method::POST,
+            "/v1/bots",
+            Some(json!({"profile_toml": profile})),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.json());
+        let path = format!("/v1/bots/{}", created.json()["id"].as_str().unwrap());
+        // The level must be Full.
+        let wrong = call(
+            &t,
+            Method::PUT,
+            &format!("{path}/engine"),
+            Some(body("ask")),
+        )
+        .await;
+        assert_eq!(wrong.status, StatusCode::UNPROCESSABLE_ENTITY, "{preset:?}");
+        let ok = call(
+            &t,
+            Method::PUT,
+            &format!("{path}/engine"),
+            Some(body("full")),
+        )
+        .await;
+        assert_eq!(ok.status, StatusCode::OK, "{preset:?}: {:?}", ok.json());
+        assert_eq!(ok.json()["config"]["engine"]["approval_level"], "full");
+    }
+    let audit = t.state.storage().list_audit(t.state.user_id()).unwrap();
+    assert!(
+        audit
+            .iter()
+            .any(|a| a.action == "engine.updated" && a.detail["full_access_bot"] == true)
+    );
+}
+
+/// Without a workspaces root there is no default folder: the owner is told to choose one, and
+/// nothing is created inside the data folder (on a host the service home IS the data folder).
+#[tokio::test]
+async fn without_a_workspaces_root_no_folder_is_made_and_the_owner_is_asked_to_choose_one() {
+    let t = setup();
+    let path = cli_bot_without_engine(&t).await;
+    let refused = call(
+        &t,
+        Method::PUT,
+        &format!("{path}/engine"),
+        Some(
+            json!({"mode": "native_tools", "approval_level": "ask", "consent_native_tools": true}),
+        ),
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(refused.json()["error"]["code"], "bad_engine");
+    assert!(
+        refused.json()["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("could not create a work folder")
+    );
+    assert!(!t.state.storage().data_dir().join("Praxi").exists());
+}
+
+/// A folder saved by an older version (inside the data folder, which the rule now refuses) is not
+/// kept forever: the next engine save without a folder replaces it, so the owner is never stuck.
+#[tokio::test]
+async fn a_saved_folder_the_rule_refuses_is_replaced_on_the_next_engine_save() {
+    let t = setup();
+    let root = tempfile::tempdir().unwrap();
+    t.state
+        .set_workspaces_root(Some(root.path().join("praxi-work")));
+    let path = cli_bot_without_engine(&t).await;
+    let bot_id = protocol::BotId(path.rsplit('/').next().unwrap().parse().unwrap());
+    let stale = t.state.storage().data_dir().join("Praxi").join("old-bot");
+    std::fs::create_dir_all(&stale).unwrap();
+    let (mut bot, version) = t
+        .state
+        .storage()
+        .get_bot_versioned(bot_id)
+        .unwrap()
+        .unwrap();
+    bot.config["engine"] = json!({
+        "mode": "native_tools", "approval_level": "ask", "workspace": stale.display().to_string(),
+        "consent": {"native_tools_at_ms": 1}
+    });
+    t.state
+        .storage()
+        .update_bot(bot_id, &bot.name, &bot.config, version)
+        .unwrap();
+    let ok = call(
+        &t,
+        Method::PUT,
+        &format!("{path}/engine"),
+        Some(
+            json!({"mode": "native_tools", "approval_level": "ask", "consent_native_tools": true}),
+        ),
+    )
+    .await;
+    assert_eq!(ok.status, StatusCode::OK, "{:?}", ok.json());
+    let folder = ok.json()["config"]["engine"]["workspace"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(folder, stale.display().to_string());
+    assert!(
+        std::fs::canonicalize(&folder)
+            .unwrap()
+            .starts_with(std::fs::canonicalize(root.path()).unwrap())
+    );
+}
+
 // ------------------------------------------------------ POST /v1/runs/stop
 
 /// A run row in `state` for the test user (no task drives it).

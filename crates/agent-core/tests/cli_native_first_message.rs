@@ -199,6 +199,33 @@ async fn child(id: &str) {
         );
         assert!(events.contains("engine_needs_native"), "{id}: {events}");
     }
+    // A turn never switches the engine on, not even for a Full bot: only the owner's pick (the
+    // owner-authenticated engine route) does. The turn is refused, and nothing is saved or audited.
+    if !matches!(driver, Driver::Claude | Driver::Codex) {
+        let full_bot = format!("{governed}[permissions]\npreset='full'\n");
+        lp.add_profile(bot, BotProfile::from_toml_str(&full_bot).unwrap());
+        let run = lp.run_turn(chat, "hello").unwrap();
+        assert_eq!(
+            wait(&lp, &mut rx, user, run).await,
+            RunState::Failed,
+            "{id} (full bot, governed engine)"
+        );
+        let events = format!(
+            "{:?}",
+            storage::read_event_log(root.join("store").as_path(), run).unwrap()
+        );
+        assert!(events.contains("engine_needs_native"), "{id}: {events}");
+        let stored = store.get_bot(bot).unwrap().unwrap().config;
+        assert!(stored.get("engine").is_none(), "{id}: {stored}");
+        assert!(
+            store
+                .list_audit(user)
+                .unwrap()
+                .iter()
+                .all(|a| a.action != "engine.updated"),
+            "{id}: a turn wrote an engine setting"
+        );
+    }
     lp.add_profile(bot, BotProfile::from_toml_str(&native).unwrap());
     let run = lp.run_turn(chat, "hello").unwrap();
     let state = wait(&lp, &mut rx, user, run).await;

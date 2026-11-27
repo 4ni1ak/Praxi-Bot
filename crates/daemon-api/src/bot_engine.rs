@@ -24,8 +24,8 @@ pub struct BotEngineInput {
     /// `ask` (default), `accept_edits`, `auto` or `full`.
     #[serde(default)]
     pub approval_level: Option<String>,
-    /// Absolute workspace folder for `native_tools`; when omitted the daemon creates
-    /// `<home>/Praxi/<bot>` for the bot.
+    /// Absolute workspace folder for `native_tools`; when omitted the bot keeps the folder it
+    /// has, else the daemon uses the bot's own workspace folder under the workspaces root.
     #[serde(default)]
     pub workspace: Option<String>,
     /// The owner confirms that a CLI runs this bot's file and shell actions.
@@ -34,6 +34,11 @@ pub struct BotEngineInput {
     /// The owner confirms Full access (no approval prompts) for this bot.
     #[serde(default)]
     pub consent_full_access: bool,
+    /// The app applied this engine without a dialog because the bot is on Full access (the owner's
+    /// pick of the engine is the consent). The daemon checks the stored permission preset itself:
+    /// anything but Full is refused (403), and the level must be `full`.
+    #[serde(default)]
+    pub full_access_bot: bool,
 }
 
 fn refuse(message: impl Into<String>) -> ApiError {
@@ -50,28 +55,46 @@ fn executor_driver(executor: &str) -> Option<Driver> {
     Driver::from_id(id)
 }
 
-/// The folder a bot works in when the owner did not choose one: `<home>/Praxi/<bot name>-<id>`,
-/// created on demand. The same refusals as for a chosen folder apply afterwards.
-fn default_workspace(bot: &storage::Bot) -> Option<String> {
-    let home = std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(std::path::PathBuf::from)?;
-    let slug: String = bot
-        .name
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '-' })
-        .collect::<String>()
-        .trim_matches('-')
-        .chars()
-        .take(40)
-        .collect();
-    let short = bot.id.to_string().chars().take(8).collect::<String>();
-    let dir = home.join("Praxi").join(format!(
-        "{}-{short}",
-        if slug.is_empty() { "bot" } else { &slug }
-    ));
-    std::fs::create_dir_all(&dir).ok()?;
-    Some(dir.display().to_string())
+/// The folder a bot works in when the owner did not choose one: the bot's own workspace folder
+/// under the workspaces root (`/var/lib/praxi-work/<bot>` on a host, `<Documents>/Praxi/<bot>` on a
+/// desktop). That root is checked against Praxi's data folder and the credential folders before
+/// anything is created, and the bot's folder is made private (a plain directory, no links). The
+/// result passes the same folder rule as a folder the owner chose, with the real home folder and the
+/// data folder of this daemon. A daemon without a workspaces root has no default: nothing is created
+/// under the home folder (on a host that is the data folder itself), and the owner picks a folder.
+fn default_workspace(s: &AppState, bot: &storage::Bot) -> Option<String> {
+    let data_dir = s.storage().data_dir();
+    let dir = s.agent().bot_workspace_dir(bot.id)?;
+    vetted_folder(&dir, data_dir).map(|canonical| canonical.display().to_string())
+}
+
+/// A folder the daemon picked itself (the bot's own, or the one it already has) is used only when
+/// it is a real directory, not a link or junction, and its canonical path passes the folder rule
+/// with the daemon's real home folder and data folder. Returns that canonical path.
+fn vetted_folder(dir: &std::path::Path, data_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let meta = std::fs::symlink_metadata(dir).ok()?;
+    if !meta.is_dir() || meta.file_type().is_symlink() || is_reparse_point(&meta) {
+        return None;
+    }
+    let canonical = storage::without_verbatim_prefix(std::fs::canonicalize(dir).ok()?);
+    builtin_tools::workspace_refusal_with_home(
+        &canonical,
+        data_dir,
+        builtin_tools::service_home().as_deref(),
+    )
+    .is_none()
+    .then_some(canonical)
+}
+
+#[cfg(windows)]
+fn is_reparse_point(meta: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    meta.file_attributes() & 0x400 != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(_: &std::fs::Metadata) -> bool {
+    false
 }
 
 /// Validate a change and return the settings to store. Pure apart from the
@@ -110,7 +133,11 @@ fn next_settings(
         .map(str::trim)
         .filter(|w| !w.is_empty())
         .ok_or_else(|| refuse("a workspace folder is required"))?;
-    if let Some(why) = builtin_tools::workspace_refusal(std::path::Path::new(workspace), data_dir) {
+    if let Some(why) = builtin_tools::workspace_refusal_with_home(
+        std::path::Path::new(workspace),
+        data_dir,
+        builtin_tools::service_home().as_deref(),
+    ) {
         return Err(refuse(why));
     }
     let mut consent: EngineConsent = current.consent.clone();
@@ -203,21 +230,39 @@ pub(crate) async fn put_engine(
     let mut bot = s.bot_of_user(BotId(crate::routes::id(&bid)?))?;
     let profile: agent_core::BotProfile =
         serde_json::from_value(bot.config.clone()).map_err(ApiError::internal)?;
+    // "No dialog because the bot is on Full access" is checked here, from the stored preset (the
+    // one spelling rule of the runtime), never taken from the client.
+    if input.full_access_bot {
+        if profile.permissions.mode() != permission_engine::AutonomyMode::Full {
+            return Err(ApiError::forbidden(
+                "this bot is not on Full access, so its engine needs the owner's own consent",
+            ));
+        }
+        if input.mode != EngineMode::NativeTools.as_str()
+            || input.approval_level.as_deref() != Some(cli_provider::ApprovalLevel::Full.as_str())
+        {
+            return Err(refuse(
+                "a Full access bot runs its engine's own tools at the Full level",
+            ));
+        }
+    }
     if input.mode == EngineMode::NativeTools.as_str()
         && input
             .workspace
             .as_deref()
             .is_none_or(|w| w.trim().is_empty())
     {
-        // A bot that already has a folder keeps it when its engine or level changes.
+        // A bot that already has a folder keeps it when its engine or level changes, unless the
+        // folder rule refuses it now (a folder saved by an older version, or one inside the data folder).
+        let data_dir = s.storage().data_dir();
         let kept = profile
             .engine
             .workspace
             .clone()
-            .filter(|w| std::path::Path::new(w).is_dir());
+            .filter(|w| vetted_folder(std::path::Path::new(w), data_dir).is_some());
         input.workspace = Some(match kept {
             Some(kept) => kept,
-            None => default_workspace(&bot).ok_or_else(|| {
+            None => default_workspace(&s, &bot).ok_or_else(|| {
                 refuse("could not create a work folder for this bot; choose a folder in the bot's engine settings")
             })?,
         });
@@ -243,6 +288,7 @@ pub(crate) async fn put_engine(
                 "to": summary(&next),
                 "consent_native_tools": input.consent_native_tools,
                 "consent_full_access": input.consent_full_access,
+                "full_access_bot": input.full_access_bot,
             }),
         )
         .map_err(ApiError::internal)?;
@@ -296,6 +342,7 @@ mod tests {
             workspace: Some(ws.display().to_string()),
             consent_native_tools: native,
             consent_full_access: full,
+            full_access_bot: false,
         }
     }
 

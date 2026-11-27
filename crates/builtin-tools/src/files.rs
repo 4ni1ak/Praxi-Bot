@@ -1653,10 +1653,16 @@ fn cli_home_override(path: &[String]) -> bool {
 /// one), so the engine's own tools cannot reach what Praxi's file tools never may.
 #[must_use]
 pub fn workspace_refusal(dir: &Path, data_dir: &Path) -> Option<&'static str> {
-    let home = std::env::var_os("USERPROFILE")
+    workspace_refusal_with_home(dir, data_dir, service_home().as_deref())
+}
+
+/// The home folder of the account this daemon runs as (`USERPROFILE`, else `HOME`): on the Linux
+/// host that is Praxi's own data folder, on a desktop the person's profile.
+#[must_use]
+pub fn service_home() -> Option<PathBuf> {
+    std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from);
-    workspace_refusal_with_home(dir, data_dir, home.as_deref())
+        .map(PathBuf::from)
 }
 
 /// Credential and tool-configuration folders (SSH, cloud, GPG, container, CLI settings).
@@ -1682,7 +1688,9 @@ const CREDENTIAL_DIRS: [&str; 18] = [
     ".docker",
 ];
 
-fn workspace_refusal_with_home(
+/// [`workspace_refusal`] with an explicit home folder (the daemon's real one, or a test layout).
+#[must_use]
+pub fn workspace_refusal_with_home(
     dir: &Path,
     data_dir: &Path,
     home: Option<&Path>,
@@ -8272,6 +8280,26 @@ mod workspace_refusal_tests {
         }
         let root = tmp.path().ancestors().last().unwrap();
         assert!(check(root).is_some(), "drive root");
+    }
+
+    /// The Linux host: the service account's home IS the data folder (`/var/lib/praxi`) and bots
+    /// work under its sibling `/var/lib/praxi-work`. A folder below the home was the default that
+    /// the rule refused ("This folder cannot be used"); a bot's folder under the workspaces root passes.
+    #[test]
+    fn host_layout_refuses_a_folder_below_the_home_and_accepts_the_bots_workspace_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("var-lib-praxi");
+        let data = home.clone();
+        let root = tmp.path().join("var-lib-praxi-work");
+        fs::create_dir_all(&data).unwrap();
+        fs::create_dir_all(home.join("Praxi").join("main-0194")).unwrap();
+        let bot = crate::workspace::ensure_bot_workspace_dir(&root, "Main", &data).unwrap();
+        let check = |p: &Path| workspace_refusal_with_home(p, &data, Some(&home));
+        assert!(
+            check(&home.join("Praxi").join("main-0194")).is_some(),
+            "a folder below the service home is inside the data folder"
+        );
+        assert_eq!(check(&bot), None, "{bot:?}");
     }
 }
 
