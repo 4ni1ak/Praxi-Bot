@@ -14,7 +14,7 @@ use tool_registry::{
     ToolSpec,
 };
 
-use super::{T, call, call_token_only, make_chat, send_msg, setup, wait_state};
+use super::{T, auth, call, call_token_only, make_chat, send, send_msg, setup, wait_state};
 
 const CANARY: &str = "canary-elicit-route-5512";
 
@@ -39,6 +39,7 @@ fn field(name: &str, kind: ElicitationFieldType) -> ElicitationField {
         max_length: None,
         format: None,
         default: None,
+        blocked: false,
     }
 }
 
@@ -88,10 +89,18 @@ fn rig() -> (T, Arc<Mutex<Vec<ElicitationAnswer>>>) {
 
 async fn open_form(t: &T) -> (String, String) {
     let (_bot, chat) = make_chat(t).await;
-    let run = send_msg(t, &chat, "call:booking_form {}", "queue").await["run_id"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+    // A form is only for a run the owner started in the app (`local_ui` plus the owner key).
+    let (key, value) = auth();
+    let started = send(
+        &t.app,
+        Method::POST,
+        &format!("/v1/chats/{chat}/messages"),
+        Some(json!({"text": "call:booking_form {}", "mode": "queue"})),
+        &[(key, &value), ("x-praxi-message-source", "local_ui")],
+    )
+    .await;
+    assert_eq!(started.status, StatusCode::ACCEPTED);
+    let run = started.json()["run_id"].as_str().unwrap().to_owned();
     let id: uuid::Uuid = run.parse().unwrap();
     for _ in 0..200 {
         let log = storage::read_event_log(t.state.storage().data_dir(), protocol::RunId(id))
@@ -194,4 +203,29 @@ fn elicitation_routes_are_owner_only_and_closed_to_peers() {
         "POST",
         "/v1/elicitations/abc/cancel"
     ));
+}
+
+/// A message that is not the owner's own app (a bearer-only client, a channel,
+/// a paired device) starts a run that is declined at once: no form, nothing to answer.
+#[tokio::test]
+async fn a_message_that_is_not_from_the_owners_app_gets_no_form() {
+    let (t, seen) = rig();
+    let (_bot, chat) = make_chat(&t).await;
+    let run = send_msg(&t, &chat, "call:booking_form {}", "queue").await["run_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    wait_state(&t, &run, "succeeded").await;
+    assert_eq!(*seen.lock(), [ElicitationAnswer::Decline]);
+    let id: uuid::Uuid = run.parse().unwrap();
+    let log = storage::read_event_log(t.state.storage().data_dir(), protocol::RunId(id)).unwrap();
+    assert!(
+        log.iter()
+            .all(|e| !matches!(e.event, protocol::Event::ElicitationRequested(_)))
+    );
+    let audit = format!(
+        "{:?}",
+        t.state.storage().list_audit(t.state.user_id()).unwrap()
+    );
+    assert!(audit.contains("elicitation.refused"));
 }

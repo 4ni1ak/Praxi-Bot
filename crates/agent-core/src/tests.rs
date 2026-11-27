@@ -8,7 +8,7 @@ mod c382;
 mod c812;
 mod c821;
 mod composio_approvals;
-mod elicitation;
+pub(crate) mod elicitation;
 mod external_agent;
 pub(crate) mod fill_secret;
 mod grounding;

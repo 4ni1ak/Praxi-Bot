@@ -3554,7 +3554,7 @@ fn parked_question_text(question: &str) -> String {
 }
 
 /// What the model reads when a mission session parks an item for the owner instead of waiting.
-fn mission_park_text(key: Option<&str>, reason: &str) -> String {
+pub(crate) fn mission_park_text(key: Option<&str>, reason: &str) -> String {
     match key {
         Some(key) => format!(
             "Not waiting: this is a mission, so a person is not asked right now. Item {key:?} is parked as blocked ({reason}); the owner sees it in the blocked list. Do not retry it. Take the next open item now."

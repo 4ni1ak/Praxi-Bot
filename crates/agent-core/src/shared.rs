@@ -863,6 +863,11 @@ pub(crate) struct CtxState {
     pub secret_requests: u32,
     /// `browser_handover` calls this run has made (asked or refused).
     pub handovers: u32,
+    /// MCP server forms this run has been asked for (shown or refused after the owner check).
+    pub elicitations: u32,
+    /// What the owner typed into this run's MCP forms: masked in every tool result of this
+    /// run (a server may echo it). Scoped to the run, never shared or kept.
+    pub elicited: Option<secret_store::Redactor>,
 }
 
 /// Per-run resolved computer placement fixed at run start.
@@ -2350,6 +2355,8 @@ impl Shared {
                 todos: Vec::new(),
                 secret_requests: 0,
                 handovers: 0,
+                elicitations: 0,
+                elicited: None,
             }),
             taint: Mutex::new(taint),
             control_grants: Mutex::new(Vec::new()),

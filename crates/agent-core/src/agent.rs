@@ -2279,13 +2279,16 @@ impl AgentLoop {
         answer: tool_registry::ElicitationAnswer,
     ) -> std::result::Result<(), crate::ElicitationRefusal> {
         use crate::ElicitationRefusal::{Gone, Invalid};
-        use tool_registry::ElicitationAnswer::Accept;
+        use tool_registry::ElicitationAnswer::{Accept, Cancel, Parked};
         let fields = self.elicitation(call_id).ok_or(Gone)?;
         let answer = match answer {
             Accept(content) => {
                 self.refuse_if_stopped(call_id).map_err(|_| Gone)?;
-                Accept(crate::elicitation::validate(&fields, content).map_err(Invalid)?)
+                let redactor = self.sh.cfg.redactor.as_ref();
+                Accept(crate::elicitation::validate(&fields, content, redactor).map_err(Invalid)?)
             }
+            // Only the loop parks a form, never a caller.
+            Parked(_) => Cancel,
             other => other,
         };
         self.sh.elicitations.lock().remove(&call_id);

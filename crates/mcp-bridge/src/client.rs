@@ -11,29 +11,84 @@
 //! tool calls runs: the request belongs to that call's run. With no call or
 //! several calls in flight on the server it is declined (the bridge never
 //! guesses the run). A form the bridge cannot show (URL mode, a multi-select
-//! list, an unknown type) is declined too. The answer goes back to the server
-//! only; when the call ends first, the server gets `cancel`.
+//! list, an unknown type) or must not show (over the size limits in
+//! `form.rs`, or more than [`MAX_REQUESTS_PER_WINDOW`] requests from one server
+//! in a minute) is declined too, and the host is told why (`Elicitor::refused`)
+//! so it can audit it. The answer goes back to the server only; when the call
+//! ends first, the server gets `cancel`.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, AtomicUsize, Ordering},
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
 
 use parking_lot::{Mutex, RwLock};
-use protocol::event::{ElicitationField, ElicitationFieldType, ElicitationOption};
 use rmcp::{
     ClientHandler, ErrorData, RoleClient,
     model::{
         ClientConfig, ElicitRequestParams, ElicitResult, ElicitationAction, ElicitationCapability,
-        ElicitationSchema, FormElicitationCapability,
+        FormElicitationCapability,
     },
     service::{NotificationContext, RequestContext, RunningService},
 };
 use serde_json::Value;
+use tokio::time::Instant;
 use tool_registry::{ElicitationAnswer, ElicitationRequest, Elicitor};
+
+use crate::form;
 
 /// Where the host installs its [`Elicitor`]; shared by every server of a manager.
 pub(crate) type ElicitorSlot = RwLock<Option<Arc<dyn Elicitor>>>;
+
+/// Form requests one server may make in [`RATE_WINDOW`], whether or not a tool
+/// call is in flight. The rest are declined.
+pub(crate) const MAX_REQUESTS_PER_WINDOW: usize = 4;
+pub(crate) const RATE_WINDOW: Duration = Duration::from_secs(60);
+
+/// A server's request budget, shared by every session of the server.
+#[derive(Default)]
+struct Rate {
+    recent: Mutex<VecDeque<Instant>>,
+    /// The refusal of this window was already reported to the host.
+    reported: Mutex<bool>,
+}
+
+/// What [`Rate::check`] decided.
+#[derive(Debug, PartialEq, Eq)]
+enum Budget {
+    Allowed,
+    /// Over budget; `report` is true for the first refusal of a window only
+    /// (a flood of requests must not become a flood of audit rows).
+    Limited {
+        report: bool,
+    },
+}
+
+impl Rate {
+    fn check(&self) -> Budget {
+        let now = Instant::now();
+        let mut recent = self.recent.lock();
+        while recent
+            .front()
+            .is_some_and(|t| now.duration_since(*t) >= RATE_WINDOW)
+        {
+            recent.pop_front();
+        }
+        if recent.len() < MAX_REQUESTS_PER_WINDOW {
+            recent.push_back(now);
+            *self.reported.lock() = false;
+            return Budget::Allowed;
+        }
+        let mut reported = self.reported.lock();
+        let report = !*reported;
+        *reported = true;
+        Budget::Limited { report }
+    }
+}
 
 /// One tool call in flight on a server.
 struct InFlight {
@@ -41,6 +96,8 @@ struct InFlight {
     run_id: String,
     /// Closed when the call ends.
     done: tokio::sync::watch::Receiver<()>,
+    /// A note for the model the host left when it parked the work item.
+    note: Arc<Mutex<Option<String>>>,
 }
 
 /// Signals a session raises for the server that owns it. They outlive a
@@ -56,13 +113,23 @@ pub(crate) struct Signals {
     next_call: AtomicU64,
     /// Forms open right now: the call waits for the owner, not for the server.
     eliciting: AtomicUsize,
+    rate: Rate,
 }
 
 /// Marks a tool call in flight until dropped.
 pub(crate) struct CallGuard {
     signals: Arc<Signals>,
     id: u64,
+    note: Arc<Mutex<Option<String>>>,
     _done: tokio::sync::watch::Sender<()>,
+}
+
+impl CallGuard {
+    /// What the host wants the model to read next to this call's result (the
+    /// work item was parked), once.
+    pub(crate) fn take_note(&self) -> Option<String> {
+        self.note.lock().take()
+    }
 }
 
 impl Drop for CallGuard {
@@ -92,14 +159,17 @@ impl Signals {
     pub(crate) fn begin_call(self: &Arc<Self>, run_id: &str) -> CallGuard {
         let id = self.next_call.fetch_add(1, Ordering::Relaxed);
         let (tx, done) = tokio::sync::watch::channel(());
+        let note = Arc::new(Mutex::new(None));
         self.calls.lock().push(InFlight {
             id,
             run_id: run_id.to_owned(),
             done,
+            note: Arc::clone(&note),
         });
         CallGuard {
             signals: Arc::clone(self),
             id,
+            note,
             _done: tx,
         }
     }
@@ -111,30 +181,45 @@ impl Signals {
 
     async fn elicit(&self, request: ElicitRequestParams) -> ElicitResult {
         let decline = || ElicitResult::new(ElicitationAction::Decline);
-        let ElicitRequestParams::FormElicitationParams {
-            message,
-            requested_schema,
-            ..
-        } = request
-        else {
-            return decline();
-        };
-        let Some(fields) = fields_of(&requested_schema) else {
-            return decline();
-        };
+        // Every request counts against the budget, answered or not.
+        let budget = self.rate.check();
         let Some(elicitor) = self.elicitor.read().clone() else {
             return decline();
         };
-        let (run_id, mut done) = match self.calls.lock().as_slice() {
-            [call] => (call.run_id.clone(), call.done.clone()),
+        let (run_id, mut done, note) = match self.calls.lock().as_slice() {
+            [call] => (
+                call.run_id.clone(),
+                call.done.clone(),
+                Arc::clone(&call.note),
+            ),
             _ => return decline(),
+        };
+        match budget {
+            Budget::Allowed => {}
+            Budget::Limited { report } => {
+                if report {
+                    elicitor.refused(
+                        &run_id,
+                        &self.server,
+                        "too many form requests from this server (limit: 4 per minute)",
+                    );
+                }
+                return decline();
+            }
+        }
+        let form = match form::project(request) {
+            Ok(form) => form,
+            Err(reason) => {
+                elicitor.refused(&run_id, &self.server, reason);
+                return decline();
+            }
         };
         self.eliciting.fetch_add(1, Ordering::AcqRel);
         let _open = Eliciting(&self.eliciting);
         let request = ElicitationRequest {
             server: self.server.clone(),
-            message,
-            fields,
+            message: form.message,
+            fields: form.fields,
         };
         let answer = tokio::select! {
             answer = elicitor.elicit(&run_id, request) => answer,
@@ -147,86 +232,12 @@ impl Signals {
             }
             ElicitationAnswer::Decline => decline(),
             ElicitationAnswer::Cancel => ElicitResult::new(ElicitationAction::Cancel),
+            ElicitationAnswer::Parked(text) => {
+                *note.lock() = Some(text);
+                ElicitResult::new(ElicitationAction::Cancel)
+            }
         }
     }
-}
-
-/// The form fields of a flat schema, in the server's order. `None` when a
-/// property is not a single string, number, integer, boolean or choice.
-fn fields_of(schema: &ElicitationSchema) -> Option<Vec<ElicitationField>> {
-    let required = schema.required.clone().unwrap_or_default();
-    let order = schema
-        .property_order
-        .clone()
-        .unwrap_or_else(|| schema.properties.keys().cloned().collect());
-    order
-        .into_iter()
-        .map(|name| {
-            let property = serde_json::to_value(schema.properties.get(&name)?).ok()?;
-            let required = required.contains(&name);
-            field(name, &property, required)
-        })
-        .collect()
-}
-
-fn field(name: String, p: &Value, required: bool) -> Option<ElicitationField> {
-    let text = |key: &str| p.get(key).and_then(Value::as_str).map(str::to_owned);
-    let length = |key: &str| {
-        p.get(key)
-            .and_then(Value::as_u64)
-            .and_then(|n| u32::try_from(n).ok())
-    };
-    let kind = match p.get("type")?.as_str()? {
-        "string" => ElicitationFieldType::String,
-        "number" => ElicitationFieldType::Number,
-        "integer" => ElicitationFieldType::Integer,
-        "boolean" => ElicitationFieldType::Boolean,
-        _ => return None,
-    };
-    let options = options(p)?;
-    if !options.is_empty() && kind != ElicitationFieldType::String {
-        return None;
-    }
-    Some(ElicitationField {
-        name,
-        title: text("title"),
-        description: text("description"),
-        kind,
-        required,
-        options,
-        minimum: p.get("minimum").and_then(Value::as_f64),
-        maximum: p.get("maximum").and_then(Value::as_f64),
-        min_length: length("minLength"),
-        max_length: length("maxLength"),
-        format: text("format"),
-        default: p.get("default").cloned(),
-    })
-}
-
-/// The choices of an `enum` (with optional `enumNames`) or a titled `oneOf`.
-fn options(p: &Value) -> Option<Vec<ElicitationOption>> {
-    let mut out = Vec::new();
-    if let Some(values) = p.get("enum").and_then(Value::as_array) {
-        let names = p.get("enumNames").and_then(Value::as_array);
-        for (i, v) in values.iter().enumerate() {
-            let value = v.as_str()?.to_owned();
-            let label = names
-                .and_then(|n| n.get(i))
-                .and_then(Value::as_str)
-                .map_or_else(|| value.clone(), str::to_owned);
-            out.push(ElicitationOption { value, label });
-        }
-    } else if let Some(choices) = p.get("oneOf").and_then(Value::as_array) {
-        for c in choices {
-            let value = c.get("const")?.as_str()?.to_owned();
-            let label = c
-                .get("title")
-                .and_then(Value::as_str)
-                .map_or_else(|| value.clone(), str::to_owned);
-            out.push(ElicitationOption { value, label });
-        }
-    }
-    Some(out)
 }
 
 /// Handler installed on every session.
@@ -264,7 +275,7 @@ impl ClientHandler for BridgeClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use rmcp::model::ElicitationSchema;
 
     struct Echo;
 
@@ -284,6 +295,29 @@ mod tests {
     impl Elicitor for Never {
         async fn elicit(&self, _: &str, _: ElicitationRequest) -> ElicitationAnswer {
             std::future::pending().await
+        }
+    }
+
+    /// Answers with a fixed answer and remembers every refusal it was told of.
+    #[derive(Default)]
+    struct Recorder {
+        answer: Mutex<Option<ElicitationAnswer>>,
+        refusals: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Elicitor for Recorder {
+        async fn elicit(&self, _: &str, _: ElicitationRequest) -> ElicitationAnswer {
+            self.answer
+                .lock()
+                .clone()
+                .unwrap_or(ElicitationAnswer::Decline)
+        }
+
+        fn refused(&self, run_id: &str, server: &str, reason: &str) {
+            self.refusals
+                .lock()
+                .push(format!("{run_id}|{server}|{reason}"));
         }
     }
 
@@ -339,8 +373,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn url_mode_declines() {
-        let s = signals(Arc::new(Echo));
+    async fn url_mode_declines_and_is_reported() {
+        let rec = Arc::new(Recorder::default());
+        let s = signals(rec.clone());
         let _call = s.begin_call("run-1");
         let url = ElicitRequestParams::UrlElicitationParams {
             meta: None,
@@ -349,6 +384,7 @@ mod tests {
             elicitation_id: "x".into(),
         };
         assert_eq!(s.elicit(url).await.action, ElicitationAction::Decline);
+        assert_eq!(rec.refusals.lock().len(), 1);
     }
 
     #[tokio::test]
@@ -368,36 +404,63 @@ mod tests {
         assert!(!s.is_eliciting());
     }
 
-    #[test]
-    fn flat_schema_becomes_fields_and_multi_select_is_refused() {
-        let schema: ElicitationSchema = serde_json::from_value(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "title": "Name", "maxLength": 20},
-                "age": {"type": "integer", "minimum": 0, "maximum": 150},
-                "ok": {"type": "boolean", "default": true},
-                "size": {"type": "string", "enum": ["s", "m"], "enumNames": ["Small", "Medium"]}
-            },
-            "required": ["name"]
-        }))
-        .unwrap();
-        let fields = fields_of(&schema).unwrap();
-        let by = |n: &str| fields.iter().find(|f| f.name == n).unwrap();
-        assert_eq!(fields.len(), 4);
-        assert!(by("name").required && !by("age").required);
-        assert_eq!(by("name").max_length, Some(20));
-        assert_eq!(by("age").kind, ElicitationFieldType::Integer);
-        assert_eq!(by("age").maximum, Some(150.0));
-        assert_eq!(by("ok").default, Some(Value::Bool(true)));
-        assert_eq!(by("size").options[1].label, "Medium");
+    #[tokio::test(start_paused = true)]
+    async fn a_server_over_its_budget_is_declined_reported_once_and_recovers() {
+        let rec = Arc::new(Recorder::default());
+        let s = signals(rec.clone());
+        let _call = s.begin_call("run-1");
+        for _ in 0..MAX_REQUESTS_PER_WINDOW {
+            assert_eq!(s.elicit(form()).await.action, ElicitationAction::Decline);
+        }
+        assert!(
+            rec.refusals.lock().is_empty(),
+            "within budget: nothing refused"
+        );
+        for _ in 0..10 {
+            assert_eq!(s.elicit(form()).await.action, ElicitationAction::Decline);
+        }
+        assert_eq!(
+            rec.refusals.lock().len(),
+            1,
+            "a flood is reported once per window, not once per request"
+        );
+        assert!(rec.refusals.lock()[0].starts_with("run-1|srv|too many"));
+        tokio::time::advance(RATE_WINDOW).await;
+        *rec.answer.lock() = Some(ElicitationAnswer::Cancel);
+        assert_eq!(
+            s.elicit(form()).await.action,
+            ElicitationAction::Cancel,
+            "a new window is a new budget"
+        );
+    }
 
-        let multi: ElicitationSchema = serde_json::from_value(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "tags": {"type": "array", "items": {"type": "string", "enum": ["a", "b"]}}
-            }
-        }))
-        .unwrap();
-        assert!(fields_of(&multi).is_none());
+    #[tokio::test]
+    async fn a_request_over_the_size_limits_never_reaches_the_host_and_is_reported() {
+        let rec = Arc::new(Recorder::default());
+        *rec.answer.lock() = Some(ElicitationAnswer::Cancel);
+        let s = signals(rec.clone());
+        let _call = s.begin_call("run-1");
+        let huge = ElicitRequestParams::FormElicitationParams {
+            meta: None,
+            message: "m".repeat(form::MAX_MESSAGE_BYTES + 1),
+            requested_schema: ElicitationSchema::builder()
+                .required_email("email")
+                .build()
+                .unwrap(),
+        };
+        assert_eq!(s.elicit(huge).await.action, ElicitationAction::Decline);
+        assert_eq!(rec.refusals.lock().len(), 1);
+        assert!(!s.is_eliciting());
+    }
+
+    #[tokio::test]
+    async fn a_parked_answer_cancels_for_the_server_and_leaves_a_note_for_the_model() {
+        let rec = Arc::new(Recorder::default());
+        *rec.answer.lock() = Some(ElicitationAnswer::Parked("item parked".into()));
+        let s = signals(rec);
+        let call = s.begin_call("run-1");
+        assert_eq!(s.elicit(form()).await.action, ElicitationAction::Cancel);
+        assert_eq!(call.take_note().as_deref(), Some("item parked"));
+        assert_eq!(call.take_note(), None, "the note is read once");
     }
 }

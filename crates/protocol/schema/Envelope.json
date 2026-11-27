@@ -83,6 +83,10 @@
         "type"
       ],
       "properties": {
+        "blocked": {
+          "description": "A suspected credential field (password, token, one-time code, card or API key, by name, title or description): shown as blocked and never submitted, whatever the server asks. Set by the daemon, never by the server.",
+          "type": "boolean"
+        },
         "default": {
           "description": "The server's default value: the only value a form may prefill."
         },

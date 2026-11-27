@@ -561,14 +561,13 @@ impl Server {
             // cancellation) makes rmcp send `notifications/cancelled` for it.
             let request = run.clone()(session.peer().clone());
             tokio::pin!(request);
-            let outcome = loop {
-                match tokio::time::timeout(self.policy.call_timeout, &mut request).await {
-                    // An elicitation form is open: the call waits for the owner (the
-                    // agent loop bounds that wait), not for a stuck server.
-                    Err(_) if self.signals.is_eliciting() => {}
-                    outcome => break outcome,
-                }
-            };
+            let outcome = await_call(
+                self.policy.call_timeout,
+                FORM_HARD_CAP,
+                || self.signals.is_eliciting(),
+                request.as_mut(),
+            )
+            .await;
             let failure = match outcome {
                 Ok(Ok(result)) => {
                     self.record_session_success(&session).await;
@@ -1380,9 +1379,102 @@ impl McpManager {
     }
 }
 
+/// The longest open forms may keep one call alive past `call_timeout`, however
+/// the host bounds its own wait (`approval_timeout` 0 means "no limit" there).
+/// A little over the host's own limit, so the host's `cancel` comes first.
+const FORM_HARD_CAP: Duration = Duration::from_secs(16 * 60);
+
+/// Wait for a call for `call_timeout`. While a form is open (`eliciting`) the
+/// call is waiting for the owner, not for a stuck server, so it may run on, but
+/// only until `hard_cap` has passed since the start: then the wait ends as the
+/// timeout it is, and dropping the call cancels the open form.
+async fn await_call<F: std::future::Future + Unpin>(
+    call_timeout: Duration,
+    hard_cap: Duration,
+    eliciting: impl Fn() -> bool,
+    mut request: F,
+) -> std::result::Result<F::Output, tokio::time::error::Elapsed> {
+    let started = tokio::time::Instant::now();
+    let mut wait = call_timeout;
+    loop {
+        match tokio::time::timeout(wait, &mut request).await {
+            Err(_) if eliciting() && started.elapsed() < hard_cap => {
+                // Never spin on a tiny timeout, never overshoot the cap.
+                wait = call_timeout.max(Duration::from_millis(50)).min(
+                    hard_cap
+                        .saturating_sub(started.elapsed())
+                        .max(Duration::from_millis(1)),
+                );
+            }
+            outcome => break outcome,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn a_call_waiting_on_a_form_ends_at_the_hard_cap_even_when_the_form_never_closes() {
+        let started = tokio::time::Instant::now();
+        let outcome = await_call(
+            Duration::from_secs(30),
+            Duration::from_secs(600),
+            || true,
+            Box::pin(std::future::pending::<()>()),
+        )
+        .await;
+        assert!(outcome.is_err());
+        let waited = started.elapsed();
+        assert!(waited >= Duration::from_secs(600), "{waited:?}");
+        assert!(
+            waited <= Duration::from_secs(600) + Duration::from_secs(1),
+            "{waited:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_call_without_a_form_times_out_on_time_and_a_form_that_closes_stops_the_extension() {
+        let started = tokio::time::Instant::now();
+        let outcome = await_call(
+            Duration::from_secs(30),
+            Duration::from_secs(600),
+            || false,
+            Box::pin(std::future::pending::<()>()),
+        )
+        .await;
+        assert!(outcome.is_err());
+        assert_eq!(started.elapsed(), Duration::from_secs(30));
+
+        // A form open during the first window only: the next window ends the call.
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let started = tokio::time::Instant::now();
+        let outcome = await_call(
+            Duration::from_secs(30),
+            Duration::from_secs(600),
+            || calls.fetch_add(1, Ordering::SeqCst) == 0,
+            Box::pin(std::future::pending::<()>()),
+        )
+        .await;
+        assert!(outcome.is_err());
+        assert_eq!(started.elapsed(), Duration::from_secs(60));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_call_that_finishes_while_a_form_is_open_returns_its_result() {
+        let outcome = await_call(
+            Duration::from_secs(30),
+            Duration::from_secs(600),
+            || true,
+            Box::pin(async {
+                tokio::time::sleep(Duration::from_secs(100)).await;
+                7
+            }),
+        )
+        .await;
+        assert_eq!(outcome.unwrap(), 7);
+    }
 
     #[test]
     fn backoff_doubles_and_caps() {

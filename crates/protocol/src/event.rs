@@ -265,6 +265,11 @@ pub struct ElicitationField {
     /// The server's default value: the only value a form may prefill.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
+    /// A suspected credential field (password, token, one-time code, card or
+    /// API key, by name, title or description): shown as blocked and never
+    /// submitted, whatever the server asks. Set by the daemon, never by the server.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub blocked: bool,
 }
 
 /// An MCP server asked the owner for input during one of its tool calls

@@ -100,7 +100,7 @@ fn finish(
     let outcome = match answer {
         ElicitationAnswer::Accept(_) => "accepted",
         ElicitationAnswer::Decline => "declined",
-        ElicitationAnswer::Cancel => "cancelled",
+        ElicitationAnswer::Cancel | ElicitationAnswer::Parked(_) => "cancelled",
     };
     s.agent()
         .finish_elicitation(id, answer)
